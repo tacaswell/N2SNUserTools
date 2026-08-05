@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+import warnings
 from os.path import expanduser, basename
 import argparse
 import yaml
@@ -94,6 +95,26 @@ def read_config(parser, instrument=None, no_inst=False):
         return config['common'], None
 
 
+def get_roles(inst_config):
+    """Return the role->group mapping for an instrument config.
+
+    Prefers the ``roles`` key. Falls back to the deprecated ``rights`` key
+    (emitting a ``DeprecationWarning``) for backward compatibility during the
+    ``rights`` -> ``roles`` migration. This fallback will be removed in a
+    future release, at which point a ``rights``-only config will be a hard
+    error.
+    """
+    if 'roles' in inst_config:
+        return inst_config['roles']
+    if 'rights' in inst_config:
+        warnings.warn(
+            "The 'rights' key in n2sn_tools.yml is deprecated; rename it to "
+            "'roles'. Support will be removed in a future release.",
+            DeprecationWarning, stacklevel=2)
+        return inst_config['rights']
+    raise RuntimeError("Instrument config missing 'roles' section")
+
+
 def n2sn_list(desc, message, group_name):
     parser = base_argparser(
         'List current enabled users for an instrument', True
@@ -106,7 +127,7 @@ def n2sn_list(desc, message, group_name):
     print("\n{} for instrument {}\n"
           .format(message, config['name'].upper()))
 
-    groups = config['rights']
+    groups = get_roles(config)
 
     print(n2sn_list_group_users_as_table(
           common_config['server'],
@@ -142,12 +163,12 @@ def n2sn_change_user(operation):
     if operation == 'remove':
         user_group.add_argument(
            '--purge', dest='purge', action='store_true',
-           help='Purge all users from right'
+           help='Purge all users from role'
         )
 
-    parser.add_argument('right', metavar='RIGHT',
+    parser.add_argument('role', metavar='ROLE',
                         type=str,
-                        help='Right to add')
+                        help='Role to add')
 
     args = parser.parse_args()
 
@@ -163,16 +184,17 @@ def n2sn_change_user(operation):
         print(parser.error("You must specify the user by either"
                            " login (username) or life/guest number"))
 
-    att_names = list(inst_config['rights'].keys())
+    roles_map = get_roles(inst_config)
+    att_names = list(roles_map.keys())
 
-    print(set([a.lower() for a in args.right.split(',')]))
+    print(set([a.lower() for a in args.role.split(',')]))
     print(set(att_names))
 
-    rights = args.right.split(',')
+    roles = args.role.split(',')
 
-    if len(set(att_names) & set([a.lower() for a in rights])) \
-       != len(rights):
-        print(parser.error("You must specify a right from the options:"
+    if len(set(att_names) & set([a.lower() for a in roles])) \
+       != len(roles):
+        print(parser.error("You must specify a role from the options:"
                            " {}".format((', '.join(att_names)).upper())))
 
     with ADObjects(common_config['server'],
@@ -182,8 +204,8 @@ def n2sn_change_user(operation):
                    group_search=common_config['group_search'],
                    user_search=common_config['user_search']) as ad:
 
-        for right in rights:
-            group_name = inst_config['rights'][right.lower()]
+        for role in roles:
+            group_name = roles_map[role.lower()]
 
             users = list()
 
@@ -238,9 +260,9 @@ def n2sn_change_user(operation):
                                            "check you have the correct "
                                            "permission.") from None
 
-                    print("\nSuccessfully added right {} to user \"{}\""
+                    print("\nSuccessfully added role {} to user \"{}\""
                           " for instrument {}\n"
-                          .format(right.upper(), user['displayName'],
+                          .format(role.upper(), user['displayName'],
                                   inst_config['name'].upper()))
 
                 if (operation == "remove") and (args.purge is False):
@@ -253,9 +275,9 @@ def n2sn_change_user(operation):
                                            "check you have the correct "
                                            "permission.") from None
 
-                    print("\nSuccessfully removed right {} from user \"{}\""
+                    print("\nSuccessfully removed role {} from user \"{}\""
                           " for instrument {}"
-                          .format(right.upper(), user['displayName'],
+                          .format(role.upper(), user['displayName'],
                                   inst_config['name'].upper()))
 
                 if (operation == "remove") and (args.purge is True):
@@ -276,9 +298,9 @@ def n2sn_change_user(operation):
                                            "permission.") from None
 
                     print("\nSuccessfully removed all users"
-                          " for instrument {} with right '{}'\n"
+                          " for instrument {} with role '{}'\n"
                           .format(inst_config['name'].upper(),
-                                  right.upper()))
+                                  role.upper()))
 
 
 def n2sn_add_user():
